@@ -4,6 +4,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Navigation;
+using System.Windows.Threading;
 
 namespace ivaadg.Pages
 {
@@ -12,13 +13,70 @@ namespace ivaadg.Pages
     /// </summary>
     public partial class Autho : Page
     {
-        int click;
-        
+        private int failedAttempts = 0;
+        private DispatcherTimer lockoutTimer;
+        private int remainingSeconds = 0;
+        private const int MAX_FAILED_ATTEMPTS = 3;
+        private const int LOCKOUT_DURATION_SECONDS = 10;
+
         public Autho()
         {
             InitializeComponent();
-            click = 0;
+            InitializeLockoutTimer();
             ClearFields();
+        }
+
+        private void InitializeLockoutTimer()
+        {
+            lockoutTimer = new DispatcherTimer();
+            lockoutTimer.Interval = TimeSpan.FromSeconds(1);
+            lockoutTimer.Tick += LockoutTimer_Tick;
+        }
+
+        private void LockoutTimer_Tick(object sender, EventArgs e)
+        {
+            remainingSeconds--;
+            UpdateTimerDisplay();
+
+            if (remainingSeconds <= 0)
+            {
+                lockoutTimer.Stop();
+                UnlockControls();
+            }
+        }
+
+        private void UpdateTimerDisplay()
+        {
+            if (remainingSeconds > 0)
+            {
+                tbTimer.Text = $"Осталось времени: {remainingSeconds} сек.";
+                tbTimer.Foreground = System.Windows.Media.Brushes.Red;
+                tbTimer.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                tbTimer.Visibility = Visibility.Hidden;
+            }
+        }
+
+        private void LockControls()
+        {
+            tbLogin.IsEnabled = false;
+            tbPassword.IsEnabled = false;
+            tbCaptcha.IsEnabled = false;
+            btnEnter.IsEnabled = false;
+            btnEnterGuest.IsEnabled = false;
+        }
+
+        private void UnlockControls()
+        {
+            tbLogin.IsEnabled = true;
+            tbPassword.IsEnabled = true;
+            tbCaptcha.IsEnabled = true;
+            btnEnter.IsEnabled = true;
+            btnEnterGuest.IsEnabled = true;
+            failedAttempts = 0;
+            tbTimer.Visibility = Visibility.Hidden;
         }
 
         private void btnEnterGuest_Click(object sender, RoutedEventArgs e)
@@ -50,12 +108,10 @@ namespace ivaadg.Pages
             tbPassword.Clear();
             tbCaptcha.Clear();
             HideCaptcha();
-            click = 0;
         }
 
         private void btnEnter_Click(object sender, RoutedEventArgs e)
         {
-            click += 1;
             string login = tbLogin.Text.Trim();
             string password = tbPassword.Text.Trim();
 
@@ -69,95 +125,68 @@ namespace ivaadg.Pages
             {
                 // Хешируем пароль перед проверкой в БД
                 string hashedPassword = Hash.HashPassword(password);
-                
-                RullEntities db = RullEntities.GetContext();
 
-                // Проверяем подключение - пробуем загрузить данные
-                try
-                {
-                    // Пробуем загрузить всех пользователей для диагностики
-                    var allUsers = db.User.ToList();
-                    var allRoles = db.Role.ToList();
-                    
-                    // Отладочная информация (можно убрать после исправления)
-                    System.Diagnostics.Debug.WriteLine($"Найдено пользователей в БД: {allUsers.Count}");
-                    System.Diagnostics.Debug.WriteLine($"Найдено ролей в БД: {allRoles.Count}");
-                }
-                catch (System.Exception ex)
-                {
-                    MessageBox.Show($"Ошибка при загрузке данных из БД:\n{ex.Message}\n\nПроверьте подключение к базе данных.");
-                    return;
-                }
+                RullEntities db = RullEntities.GetContext();
 
                 // Проверяем подключение и наличие пользователя
                 var user = db.User.Where(x => x.UserLogin == login && x.UserPassword == hashedPassword).FirstOrDefault();
 
-                if (click == 1)
-                {
-                    if (user != null && user.Role != null)
-                    {
-                        MessageBox.Show("Вы вошли под: " + user.Role.RoleName?.ToString());
-                        ClearFields();
-                        HideCaptcha();
-                        LoadPage(user.Role.RoleName ?? "", user);
-                    }
-                    else
-                    {
-                        // Отладочная информация
-                        try
-                        {
-                            var allUsersList = db.User.ToList();
-                            var userExists = db.User.Any(x => x.UserLogin == login);
-                            
-                            if (!userExists)
-                            {
-                                string usersInfo = allUsersList.Count > 0 
-                                    ? $"Найдено пользователей в БД: {allUsersList.Count}\nЛогины: {string.Join(", ", allUsersList.Select(u => u.UserLogin))}"
-                                    : "В базе данных нет пользователей!";
-                                    
-                                MessageBox.Show($"Пользователь с логином '{login}' не найден в базе данных.\n\n{usersInfo}\n\nПроверьте:\n1. Выполнен ли SQL скрипт CreateDatabase.sql\n2. Правильность логина\n3. Названия таблиц в БД (должны быть 'User' и 'Role')");
-                            }
-                            else
-                            {
-                                // Проверяем хеш пароля
-                                var dbUser = db.User.FirstOrDefault(x => x.UserLogin == login);
-                                if (dbUser != null)
-                                {
-                                    MessageBox.Show($"Неверный пароль!\n\nВведенный хеш: {hashedPassword}\nХеш в БД: {dbUser.UserPassword}\n\nПроверьте правильность пароля или пересоздайте пользователя в БД.");
-                                }
-                            }
-                        }
-                        catch (System.Exception ex)
-                        {
-                            MessageBox.Show($"Ошибка при проверке пользователей:\n{ex.Message}\n\nВозможно, проблема с названиями таблиц или подключением к БД.");
-                        }
-                        tbPassword.Clear();
-                        GenerateCapctcha();
-                    }
-                }
-                else if (click > 1)
+                bool isCaptchaRequired = failedAttempts >= 1;
+                bool isCaptchaValid = true;
+
+                if (isCaptchaRequired)
                 {
                     string captchaInput = tbCaptcha.Text.Trim();
                     string captchaExpected = tblCaptcha.Text;
+                    isCaptchaValid = captchaInput == captchaExpected;
+                }
 
-                    if (user != null && user.Role != null && captchaInput == captchaExpected)
+                if (user != null && user.Role != null && (!isCaptchaRequired || isCaptchaValid))
+                {
+                    // Успешная авторизация
+                    MessageBox.Show("Вы вошли под: " + user.Role.RoleName?.ToString());
+                    failedAttempts = 0;
+                    ClearFields();
+                    HideCaptcha();
+                    LoadPage(user.Role.RoleName ?? "", user);
+                }
+                else
+                {
+                    // Неудачная попытка
+                    failedAttempts++;
+
+                    if (failedAttempts >= MAX_FAILED_ATTEMPTS)
                     {
-                        MessageBox.Show("Вы вошли под: " + user.Role.RoleName?.ToString());
-                        ClearFields();
-                        HideCaptcha();
-                        LoadPage(user.Role.RoleName ?? "", user);
+                        // Блокировка на 10 секунд
+                        remainingSeconds = LOCKOUT_DURATION_SECONDS;
+                        LockControls();
+                        lockoutTimer.Start();
+                        UpdateTimerDisplay();
+                        MessageBox.Show($"Превышено количество неудачных попыток входа!\n\nОкно заблокировано на {LOCKOUT_DURATION_SECONDS} секунд.");
                     }
                     else
                     {
+                        // Показываем причину неудачи
                         if (user == null)
                         {
                             MessageBox.Show("Неверный логин или пароль!");
                         }
-                        else if (captchaInput != captchaExpected)
+                        else if (isCaptchaRequired && !isCaptchaValid)
                         {
                             MessageBox.Show("Неверная капча!");
                         }
-                        ClearFields();
+
+                        // Показываем капчу после первой неудачной попытки
+                        if (failedAttempts >= 1 && !isCaptchaRequired)
+                        {
+                            GenerateCapctcha();
+                        }
+                    }
+
+                    tbPassword.Clear();
+                    if (isCaptchaRequired)
+                    {
+                        tbCaptcha.Clear();
                         GenerateCapctcha();
                     }
                 }
@@ -174,7 +203,7 @@ namespace ivaadg.Pages
 
         private void LoadPage(string _role, User user)
         {
-            click = 0;
+            failedAttempts = 0;
             switch (_role)
             {
                 case "Клиент":
