@@ -1,4 +1,5 @@
 using ivaadg.Models;
+using ivaadg.Services;
 using System.Windows.Controls;
 
 namespace ivaadg.Pages
@@ -11,6 +12,11 @@ namespace ivaadg.Pages
         public Manager(User? user, string? role)
         {
             InitializeComponent();
+            
+            if (user != null)
+            {
+                tbGreeting.Text = UserGreetingService.GetFullGreeting(user.GetFullName());
+            }
         }
     }
 }

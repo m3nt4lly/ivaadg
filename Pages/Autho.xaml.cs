@@ -143,6 +143,20 @@ namespace ivaadg.Pages
 
                 if (user != null && user.Role != null && (!isCaptchaRequired || isCaptchaValid))
                 {
+                    // Проверка рабочего времени (только для сотрудников, не для клиентов)
+                    if (user.Role.RoleName != "Клиент" && !UserGreetingService.IsWorkingHours())
+                    {
+                        MessageBox.Show("Доступ запрещен!\n\nРабочее время: с 10:00 до 19:00.\nПопробуйте войти в рабочее время.", 
+                            "Вне рабочего времени", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        tbPassword.Clear();
+                        if (isCaptchaRequired)
+                        {
+                            tbCaptcha.Clear();
+                            GenerateCapctcha();
+                        }
+                        return;
+                    }
+
                     // Успешная авторизация
                     MessageBox.Show("Вы вошли под: " + user.Role.RoleName?.ToString());
                     failedAttempts = 0;

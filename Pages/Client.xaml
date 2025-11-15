@@ -9,6 +9,9 @@
       Title="Client"
       Background="White">
     <Grid>
+        <StackPanel VerticalAlignment="Top" HorizontalAlignment="Right" Margin="20">
+            <TextBlock x:Name="tbGreeting" FontSize="16" FontWeight="Bold" TextAlignment="Right"/>
+        </StackPanel>
         <TextBlock Text="Страница клиента" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="24"/>
     </Grid>
 </Page>
